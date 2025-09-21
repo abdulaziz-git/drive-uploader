@@ -4,28 +4,53 @@ A professional file uploader that allows users to upload files directly to Googl
 
 ## ✨ Features
 
-- **Direct Google Drive Upload** - Files upload directly to Google Drive with real progress tracking
-- **CORS Proxy Authentication** - Cloudflare Worker handles authentication while maintaining direct upload
-- **Real-time Progress** - See actual upload progress to Google Drive, not just to the proxy
-- **Embedded UI** - Clean, modern interface embedded directly in the Worker with file type icons and detailed success feedback
+- **Chunked Upload Support** - Upload files up to 5GB using intelligent chunk-based uploading
+- **No File Size Limits** - Overcome Cloudflare Workers' 100MB limit with automatic chunking
+- **Real-time Progress** - See actual upload progress with chunk-by-chunk tracking
+- **Direct Google Drive Upload** - Files upload directly to Google Drive using resumable upload API
+- **Embedded UI** - Clean, modern interface embedded directly in the Worker with file type icons
 - **Service Account Integration** - Secure server-side authentication using Google Service Account
-- **File Details Display** - Complete file information including Google Drive file ID and direct links
+- **Professional File Details** - Complete file information with Google Drive file ID and direct links
 - **Copy File ID** - One-click copying of Google Drive file IDs for API usage
-- **Error Handling** - Comprehensive error handling with user-friendly messages
+- **Smart Error Handling** - Per-chunk validation with detailed error messages
+- **Memory Efficient** - Only 10MB chunks in memory at a time, regardless of file size
+
+## 📊 Google Drive Limits
+
+According to [Google's official documentation](https://support.google.com/a/answer/172541?hl=en), there are important limits to be aware of:
+
+### File Size Limits
+- **Maximum file size**: 5TB per individual file
+- **Upload/sync limit**: Files up to 5TB can be uploaded and synchronized
+
+### Daily Upload Limits  
+- **750GB per user per 24 hours**: Each user can upload and copy up to 750GB within 24 hours
+- **Limit refresh**: The limit refreshes within 24 hours after reaching it
+- **Copy restrictions**: Files larger than 750GB cannot be copied (must download then re-upload)
+
+### Practical Implications
+- **Large files (>750GB)**: Will consume your entire daily allowance
+- **Multiple uploads**: Plan multiple file uploads across different days if needed
+- **Service accounts**: Each service account has its own 750GB daily limit
 
 ## 🏗️ Architecture
 
+### Chunked Upload Flow
 ```
-Browser → Cloudflare Worker → Google Drive API
-   ↑            ↓                    ↓
-   └─────── CORS Proxy ──────────────┘
+Large File (5GB) → Split into 500 chunks (10MB each)
+                      ↓
+Browser → Worker → Google Drive Resumable API
+   ↑        ↓           ↓
+   └── Chunk 1-500 ────┘
 ```
 
-1. **Frontend** uploads file metadata to Cloudflare Worker
-2. **Worker** creates Google Drive resumable upload session
-3. **Frontend** uploads directly to Google Drive via Worker's CORS proxy
-4. **Progress tracking** shows real Google Drive upload progress
-5. **Success display** shows complete file details with Drive links
+### Upload Process
+1. **File Analysis** - Frontend splits large files into 10MB chunks
+2. **Session Creation** - Worker creates Google Drive resumable upload session  
+3. **Chunked Upload** - Each chunk uploaded sequentially through Worker
+4. **Progress Tracking** - Real-time progress with chunk-by-chunk updates
+5. **File Assembly** - Google Drive automatically assembles complete file
+6. **Success Display** - Professional file details with Drive links
 
 ## 🚀 Quick Start
 
@@ -127,37 +152,71 @@ cf-workers-uploader-gd/
 ### Worker Configuration (`wrangler.toml`)
 
 ```toml
-name = "cf-workers-uploader-gd"
+name = "drive-uploader"
 main = "src/index.ts"
-compatibility_date = "2023-12-01"
+compatibility_date = "2025-09-21"
 
-[env.production]
-# Production environment variables
+[vars]
+# Optional default folder (uploads will go here)
+DRIVE_FOLDER_ID = "your-google-drive-folder-id"
+
+# No secrets here—set them with `wrangler secret put`
 ```
 
 ## 🎨 UI Components
 
 ### Upload Form
-- File selection with drag & drop support
-- Real-time file validation
-- Upload progress bar with percentage and file size
-- Cancel upload functionality
+- **Modern File Input** - shadcn/ui styled drag-and-drop zone
+- **Drag & Drop Support** - Visual feedback with hover states
+- **Instant File Preview** - Real-time file details display
+- **Size Limits** - Up to 5TB files supported (Google Drive per-file limit)
+- **Daily Limits** - 750GB total upload limit per user per 24 hours
+- **Smart Warnings** - Confirmation for files larger than 1GB
+- **Real-time Validation** - Immediate feedback on file selection
+
+### Configurable Upload Settings
+- **Chunk Size Selection** - Choose from 1MB to 100MB chunk sizes
+- **Performance Tuning** - Balance between speed and request count
+- **Auto-calculation** - Real-time chunk count estimation for selected files
+- **Settings Persistence** - User preferences saved in browser localStorage
+- **Cloudflare Limit Aware** - Maximum 100MB chunks (Cloudflare Workers limit)
+
+### File Preview & Details
+- **Instant Preview** - File details appear immediately upon selection
+- **Smart File Icons** - Dynamic icons based on file type (🖼️ images, 🎥 videos, 📦 archives, etc.)
+- **Upload Strategy Display** - Shows chunk size and estimated chunk count
+- **Clear File Button** - Easy file deselection with X button
+- **Responsive Grid** - File size and chunk estimation in organized layout
+
+### Chunked Upload Progress
+- **Chunk Progress** - "45% (Chunk 90/200)" display
+- **Data Transfer** - Shows uploaded/total bytes
+- **Visual Progress Bar** - Real-time progress animation
+- **Upload Speed** - Optimized 10MB chunks for best performance
 
 ### Success Display
-- Professional card layout with gradient header
-- File type icons (📦 for ZIP, 📄 for PDF, etc.)
-- Comprehensive file details grid:
+- **Professional Card Layout** - Clean, modern design with gradient header
+- **File Type Icons** - Dynamic icons (📦 ZIP, 📄 PDF, 🖼️ Images, etc.)
+- **Comprehensive Details Grid**:
   - File name and MIME type
-  - File size and upload date
+  - File size and upload timestamp
   - Upload status and platform
-  - Google Drive file ID
-- Action buttons for opening in Drive and copying file ID
+  - Google Drive file ID (copy-enabled)
+- **Action Buttons** - Direct Drive link and file ID copying
+
+### Professional Alert Dialogs
+- **shadcn/ui Design System** - Modern, accessible dialog components
+- **Context-Aware Warnings** - Different styles for file size vs daily limits
+- **Smart Animations** - Smooth fade and scale transitions
+- **Rich Information Display** - File details, chunk estimation, and warnings
+- **Keyboard Accessible** - Full keyboard navigation and ESC to close
+- **Visual Hierarchy** - Color-coded icons (🟠 info, 🔴 warning)
 
 ### Error Handling
-- Network error detection
-- Upload failure notifications
-- Retry mechanisms with exponential backoff
-- User-friendly error messages
+- **Per-chunk Validation** - Individual chunk error reporting
+- **Smart Recovery** - Clear error messages with chunk numbers
+- **Upload Termination** - Graceful handling of failures
+- **Detailed Logging** - Worker logs for troubleshooting
 
 ## 🔒 Security Features
 
@@ -168,13 +227,16 @@ compatibility_date = "2023-12-01"
 
 ## 📡 API Endpoints
 
-### `POST /` (File Upload)
-Accepts multipart form data with file and returns upload session details.
+### `POST /api/upload-init` (Initialize Chunked Upload)
+Creates a resumable upload session for chunked uploads.
 
 **Request:**
-```
-Content-Type: multipart/form-data
-file: [File object]
+```json
+{
+  "filename": "largefile.zip",
+  "mimeType": "application/zip",
+  "size": 2147483648
+}
 ```
 
 **Response:**
@@ -182,34 +244,52 @@ file: [File object]
 {
   "ok": true,
   "sessionUrl": "https://www.googleapis.com/upload/drive/v3/files/...",
-  "accessToken": "ya29.xxx",
-  "fileId": "1BxCyDzE2FgH3IjK4LmN5OpQ6RsT7UvW8XyZ9",
-  "filename": "document.pdf",
-  "mimeType": "application/pdf",
-  "size": 1048576
+  "filename": "largefile.zip",
+  "mimeType": "application/zip",
+  "size": 2147483648
+}
+```
+
+### `POST /api/upload-chunk` (Upload File Chunk)
+Uploads individual chunks of the file.
+
+**Headers:**
+```
+Content-Type: application/octet-stream
+X-Session-Url: [resumable session URL]
+X-Chunk-Start: 10485760
+X-Chunk-End: 20971519
+X-Total-Size: 2147483648
+X-Is-Last-Chunk: false
+```
+
+**Response (Continue):**
+```json
+{
+  "ok": true,
+  "status": "continue"
+}
+```
+
+**Response (Complete):**
+```json
+{
+  "ok": true,
+  "status": "complete",
+  "fileData": {
+    "id": "1BxCyDzE2FgH3IjK4LmN5OpQ6RsT7UvW8XyZ9",
+    "name": "largefile.zip",
+    "size": "2147483648",
+    "webViewLink": "https://drive.google.com/file/d/.../view"
+  }
 }
 ```
 
 ### `GET /api/file-details?fileId={id}`
 Retrieves detailed file information from Google Drive.
 
-**Response:**
-```json
-{
-  "ok": true,
-  "file": {
-    "id": "1BxCyDzE2FgH3IjK4LmN5OpQ6RsT7UvW8XyZ9",
-    "name": "document.pdf",
-    "size": "1048576",
-    "webViewLink": "https://drive.google.com/file/d/.../view",
-    "createdTime": "2025-01-01T12:00:00.000Z",
-    "mimeType": "application/pdf"
-  }
-}
-```
-
-### `PUT /api/proxy/upload/drive/v3/files/...`
-CORS proxy for direct Google Drive uploads.
+### `POST /` (Legacy Single Upload)
+Legacy endpoint for files under 100MB (still supported).
 
 ## 🧪 Testing
 
@@ -230,52 +310,109 @@ npm run deploy
 npm run cf-typegen
 ```
 
-## 🔄 Upload Flow
+## 🔄 Chunked Upload Flow
 
-1. **User selects file** → Frontend validates file
-2. **POST to Worker** → Creates resumable upload session
-3. **Extract file ID** → From session URL or response
-4. **Direct upload** → Via CORS proxy to Google Drive
-5. **Progress tracking** → Real-time upload progress
-6. **Completion** → Fetch file details and display results
+### Small Files (< 10MB)
+1. **File Selection** → Frontend validates file size and type
+2. **Single Chunk** → File uploaded as one 10MB-or-less chunk
+3. **Progress Display** → Shows "100% (Chunk 1/1)"
+4. **Completion** → File details displayed immediately
+
+### Large Files (> 10MB)
+1. **File Selection** → Frontend validates file (up to 5TB per file, 750GB daily limit)
+2. **Chunk Analysis** → File split into 10MB chunks
+3. **Session Creation** → Worker creates Google Drive resumable session
+4. **Sequential Upload** → Each chunk uploaded individually:
+   ```
+   Chunk 1/200 → Worker → Google Drive (10MB)
+   Chunk 2/200 → Worker → Google Drive (10MB)
+   ...
+   Chunk 200/200 → Worker → Google Drive (final chunk)
+   ```
+5. **Progress Tracking** → Real-time "45% (Chunk 90/200)" display
+6. **File Assembly** → Google Drive assembles complete file
+7. **Completion** → Professional file details with Drive link
+
+### Error Recovery
+- **Chunk-level Errors** → "Chunk 45 upload failed: [reason]"
+- **Network Issues** → Clear error messages with retry guidance
+- **Session Expiry** → Automatic session refresh (when possible)
 
 ## 🚨 Troubleshooting
 
 ### Common Issues
 
-**"File ID not available"**
-- Check if service account has proper Drive permissions
-- Verify the resumable upload session is created successfully
-- Enable debug logging to see session URL format
+**"Chunk X upload failed"**
+- Check network connectivity during upload
+- Monitor Worker logs: `npx wrangler tail`
+- Verify service account has proper Drive permissions
+- Large files may need multiple attempts
 
-**CORS Errors**
-- Ensure all uploads go through the `/api/proxy/` endpoint
-- Check that CORS headers are properly set in Worker
+**"Upload session initialization failed"**
+- Verify Google Service Account credentials
+- Check that Drive API is enabled in Google Cloud Console
+- Ensure service account has access to target folder
 
-**Authentication Failures**
-- Verify service account credentials are correct
-- Check that private key includes proper line breaks
-- Ensure service account has Drive API access
+**"File too large" (> 5TB)**
+- Google Drive has a 5TB per-file limit
+- Consider splitting very large files
+- Use compression if applicable
 
-**Upload Failures**
-- Check file size limits (Google Drive: 5TB max)
-- Verify internet connectivity
-- Check browser console for detailed error messages
+**"Daily upload limit exceeded"**
+- Google Drive limits users to 750GB uploads per 24 hours
+- Wait for the limit to refresh (within 24 hours)
+- Monitor your daily upload usage
+- Consider spreading large uploads across multiple days
+
+**Slow Upload Performance**
+- Large files upload in 10MB chunks sequentially
+- Network speed affects chunk upload time
+- Monitor progress: each chunk should complete within 1-2 minutes
 
 ### Debug Mode
 
-Enable debug logging by uncommenting console.log statements in the Worker:
-```javascript
-console.log('Session URL:', sessionUrl);
-console.log('Extracted File ID:', fileId);
+Monitor real-time upload progress:
+```bash
+# Watch Worker logs in real-time
+npx wrangler tail
+
+# You'll see logs like:
+# Initializing chunked upload: largefile.zip, size: 2147483648 bytes
+# Uploading chunk: bytes 0-10485759/2147483648, last: false
+# Chunk upload response: 308 Resume Incomplete
+# Upload completed, file ID: 1BxCyDzE2FgH3IjK4LmN5OpQ6RsT7UvW8XyZ9
 ```
+
+### Performance Tips
+
+- **Optimal File Sizes**: 10MB-1GB files upload fastest
+- **Network Stability**: Ensure stable internet for large uploads
+- **Browser Tab**: Keep upload tab active and visible
+- **Chunk Size Tuning**: 
+  - **1-5MB**: Fast individual chunks, more HTTP requests
+  - **10-25MB**: Balanced performance (recommended)
+  - **50-100MB**: Slower chunks, fewer requests (good for very stable connections)
 
 ## 📈 Performance Optimization
 
-- **Direct Upload** - No double upload (browser → Worker → Drive)
-- **Resumable Uploads** - Handles large files and network interruptions
-- **Progress Streaming** - Real-time progress updates
-- **Efficient CORS Proxy** - Minimal overhead for API calls
+### Chunked Upload Benefits
+- **Memory Efficient** - Only 10MB in memory per chunk, regardless of file size
+- **No Worker Limits** - Bypasses Cloudflare's 100MB request body limit
+- **Scalable Architecture** - Handles files from 1KB to 5TB equally well
+- **Daily Limit Aware** - Respects Google Drive's 750GB per 24-hour limit
+- **Network Resilient** - Individual chunk failures don't restart entire upload
+
+### Upload Performance
+- **Sequential Processing** - Chunks upload one at a time for reliability
+- **Google Drive Native** - Uses Google's resumable upload protocol
+- **Real-time Progress** - Granular progress tracking per chunk
+- **Minimal Overhead** - Worker acts as lightweight proxy only
+
+### Resource Usage
+- **CPU Efficient** - No file processing, just data forwarding
+- **Memory Light** - 10MB maximum memory usage per upload
+- **Network Optimized** - Direct browser-to-Drive data flow
+- **Cost Effective** - Minimal Worker CPU time per chunk
 
 ## 🤝 Contributing
 

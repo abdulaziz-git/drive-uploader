@@ -10,8 +10,14 @@ export default {
     const url = new URL(request.url);
 
     // Handle API routes
-    if (url.pathname === "/api/upload" || request.method === "POST") {
-      // Continue to POST handler below
+    if (url.pathname === "/api/upload-init" && request.method === "POST") {
+      // Initialize chunked upload session
+      return await handleUploadInit(request, env);
+    } else if (url.pathname === "/api/upload-chunk" && request.method === "POST") {
+      // Handle individual chunk upload
+      return await handleChunkUpload(request, env);
+    } else if (url.pathname === "/api/upload" || request.method === "POST") {
+      // Continue to POST handler below (legacy single upload)
     } else if (url.pathname === "/api/file-details" && request.method === "GET") {
       // Handle file details request
       const fileId = url.searchParams.get("fileId");
@@ -47,12 +53,25 @@ export default {
 
     if (request.method === "POST") {
       try {
+        // Check content length early to avoid processing huge requests
+        const contentLength = request.headers.get("content-length");
+        if (contentLength && parseInt(contentLength) > 100 * 1024 * 1024) { // 100MB limit
+          return json({ error: "File too large. Maximum size is 100MB." }, 413);
+        }
+
         const form = await request.formData();
         const file = form.get("file");
 
         if (!(file instanceof File)) {
           return json({ error: "No file uploaded" }, 400);
         }
+
+        // Additional file size check
+        if (file.size > 100 * 1024 * 1024) { // 100MB limit
+          return json({ error: "File too large. Maximum size is 100MB." }, 413);
+        }
+
+        console.log(`Processing upload: ${file.name}, size: ${file.size} bytes`);
 
         // Get access token using service account JWT
         const accessToken = await getAccessToken(env);
@@ -73,6 +92,7 @@ export default {
         // Debug logging
         console.log('Session URL:', sessionUrl);
         console.log('Extracted File ID:', fileId);
+        console.log('Upload session created successfully');
 
         // Return the session URL and access token for direct upload
         return json({ 
@@ -85,6 +105,7 @@ export default {
           size: file.size
         });
       } catch (err: any) {
+        console.error('Upload initialization error:', err);
         return json({ error: err?.message || String(err) }, 500);
       }
     }
@@ -173,6 +194,55 @@ function getHtml() {
     font-family: 'Inter', system-ui, -apple-system, sans-serif;
   }
   
+  /* Dialog animations */
+  @keyframes dialog-fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+  
+  @keyframes dialog-fade-out {
+    from { opacity: 1; }
+    to { opacity: 0; }
+  }
+  
+  @keyframes dialog-scale-in {
+    from { 
+      opacity: 0;
+      transform: translate(-50%, -50%) scale(0.95);
+    }
+    to { 
+      opacity: 1;
+      transform: translate(-50%, -50%) scale(1);
+    }
+  }
+  
+  @keyframes dialog-scale-out {
+    from { 
+      opacity: 1;
+      transform: translate(-50%, -50%) scale(1);
+    }
+    to { 
+      opacity: 0;
+      transform: translate(-50%, -50%) scale(0.95);
+    }
+  }
+  
+  [data-state="open"] {
+    animation: dialog-fade-in 200ms ease-out;
+  }
+  
+  [data-state="closed"] {
+    animation: dialog-fade-out 150ms ease-in;
+  }
+  
+  [data-state="open"] > div {
+    animation: dialog-scale-in 200ms ease-out;
+  }
+  
+  [data-state="closed"] > div {
+    animation: dialog-scale-out 150ms ease-in;
+  }
+  
   .animate-spin {
     animation: spin 1s linear infinite;
   }
@@ -206,18 +276,115 @@ function getHtml() {
         <p class="text-muted-foreground text-sm">Select a file and upload directly to your Drive folder</p>
       </div>
 
+      <!-- Settings Panel -->
+      <div class="bg-gray-50 rounded-lg p-4 space-y-3 mb-4">
+        <div class="flex items-center justify-between">
+          <h3 class="text-sm font-medium text-foreground">Upload Settings</h3>
+          <button type="button" id="toggleSettings" class="text-xs text-muted-foreground hover:text-foreground">
+            <span id="settingsToggleText">Hide</span>
+            <svg id="settingsIcon" class="inline w-3 h-3 ml-1 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+            </svg>
+          </button>
+        </div>
+        
+        <div id="settingsContent" class="space-y-3">
+          <div class="space-y-2">
+            <label for="chunkSize" class="text-xs font-medium text-foreground">Chunk Size</label>
+            <select 
+              id="chunkSize" 
+              class="w-full px-2 py-1.5 text-sm border border-input rounded-md bg-background text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+            >
+              <option value="1048576">1 MB (Fast, more requests)</option>
+              <option value="5242880">5 MB (Balanced)</option>
+              <option value="10485760" selected>10 MB (Default, recommended)</option>
+              <option value="26214400">25 MB (Slower, fewer requests)</option>
+              <option value="52428800">50 MB (Large chunks)</option>
+              <option value="104857600">100 MB (Maximum, Cloudflare limit)</option>
+            </select>
+            <p class="text-xs text-muted-foreground">
+              Larger chunks = fewer requests but slower individual uploads. 
+              <span class="font-medium">100MB is Cloudflare Workers' maximum request size.</span>
+            </p>
+          </div>
+        </div>
+      </div>
+
       <!-- Upload Form -->
-      <form id="uploadForm" class="space-y-4">
+      <form id="uploadForm" class="space-y-6">
         <div class="space-y-2">
           <label for="file" class="text-sm font-medium text-foreground">Choose File</label>
           <div class="relative">
+            <!-- Hidden file input -->
             <input 
               type="file" 
               id="file" 
               name="file" 
               required 
-              class="w-full px-3 py-2 border border-input rounded-md bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+              class="sr-only"
+              accept="*/*"
             />
+            
+            <!-- Custom file input button -->
+            <label for="file" class="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed border-input rounded-lg cursor-pointer bg-background hover:bg-accent/50 transition-colors group">
+              <div class="flex flex-col items-center justify-center pt-5 pb-6">
+                <svg class="w-8 h-8 mb-3 text-muted-foreground group-hover:text-foreground transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path>
+                </svg>
+                <p class="mb-2 text-sm text-muted-foreground group-hover:text-foreground transition-colors">
+                  <span class="font-semibold">Click to upload</span> or drag and drop
+                </p>
+                <p class="text-xs text-muted-foreground">Any file up to 5TB</p>
+              </div>
+            </label>
+          </div>
+        </div>
+        
+        <!-- File Details Preview -->
+        <div id="filePreview" class="hidden space-y-3">
+          <div class="flex items-center gap-2 text-sm font-medium text-foreground">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+            </svg>
+            Selected File
+          </div>
+          
+          <div class="bg-accent/30 border border-border rounded-lg p-4 space-y-3">
+            <!-- File Name and Icon -->
+            <div class="flex items-start gap-3">
+              <span id="previewFileIcon" class="text-2xl">📄</span>
+              <div class="flex-1 min-w-0">
+                <h4 id="previewFileName" class="font-medium text-foreground break-all leading-tight">filename.txt</h4>
+                <p id="previewMimeType" class="text-sm text-muted-foreground mt-1">text/plain</p>
+              </div>
+              <button type="button" id="clearFile" class="text-muted-foreground hover:text-foreground transition-colors">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                </svg>
+              </button>
+            </div>
+            
+            <!-- File Details Grid -->
+            <div class="grid grid-cols-2 gap-3 text-sm">
+              <div>
+                <dt class="text-muted-foreground">File Size</dt>
+                <dd id="previewFileSize" class="font-medium text-foreground">--</dd>
+              </div>
+              <div>
+                <dt class="text-muted-foreground">Estimated Chunks</dt>
+                <dd id="previewChunkCount" class="font-medium text-foreground">--</dd>
+              </div>
+            </div>
+            
+            <!-- Upload Strategy -->
+            <div class="pt-2 border-t border-border/50">
+              <div class="flex items-center gap-2 text-xs text-muted-foreground">
+                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
+                </svg>
+                <span id="previewStrategy">Chunked upload with 10MB chunks</span>
+              </div>
+            </div>
           </div>
         </div>
         
@@ -269,6 +436,71 @@ function getHtml() {
     </div>
   </div>
 
+  <!-- Alert Dialog for Large File Confirmation -->
+  <div id="alertDialog" class="fixed inset-0 z-50 hidden bg-black/80 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0" role="dialog" aria-modal="true">
+    <div class="fixed left-[50%] top-[50%] z-50 w-full max-w-lg translate-x-[-50%] translate-y-[-50%] gap-4 border bg-background p-6 shadow-lg duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[state=closed]:slide-out-to-left-1/2 data-[state=closed]:slide-out-to-top-[48%] data-[state=open]:slide-in-from-left-1/2 data-[state=open]:slide-in-from-top-[48%] sm:rounded-lg">
+      <!-- Dialog Header -->
+      <div class="flex flex-col space-y-1.5 text-center sm:text-left">
+        <div class="flex items-center gap-3">
+          <div class="flex h-10 w-10 items-center justify-center rounded-full bg-amber-100">
+            <svg class="h-5 w-5 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z"></path>
+            </svg>
+          </div>
+          <div>
+            <h2 id="alertTitle" class="text-lg font-semibold leading-none tracking-tight text-foreground">
+              Large File Upload
+            </h2>
+            <p class="text-sm text-muted-foreground mt-1">
+              Please confirm this upload
+            </p>
+          </div>
+        </div>
+      </div>
+      
+      <!-- Dialog Content -->
+      <div class="py-4">
+        <p id="alertMessage" class="text-sm text-foreground leading-relaxed">
+          <!-- Message will be set dynamically -->
+        </p>
+        
+        <!-- File Info -->
+        <div id="alertFileInfo" class="mt-4 rounded-lg bg-gray-50 p-3">
+          <div class="flex items-center gap-2 text-xs text-muted-foreground mb-2">
+            <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+            </svg>
+            File Details
+          </div>
+          <div class="space-y-1 text-sm">
+            <div class="flex justify-between">
+              <span class="text-muted-foreground">Name:</span>
+              <span id="alertFileName" class="font-medium text-foreground">--</span>
+            </div>
+            <div class="flex justify-between">
+              <span class="text-muted-foreground">Size:</span>
+              <span id="alertFileSize" class="font-medium text-foreground">--</span>
+            </div>
+            <div class="flex justify-between">
+              <span class="text-muted-foreground">Estimated Chunks:</span>
+              <span id="alertFileChunks" class="font-medium text-foreground">--</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      
+      <!-- Dialog Actions -->
+      <div class="flex flex-col-reverse sm:flex-row sm:justify-end sm:space-x-2">
+        <button id="alertCancel" type="button" class="inline-flex h-10 items-center justify-center rounded-md border border-input bg-background px-4 py-2 text-sm font-medium ring-offset-background transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 mt-2 sm:mt-0">
+          Cancel
+        </button>
+        <button id="alertContinue" type="button" class="inline-flex h-10 items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground ring-offset-background transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50">
+          Continue Upload
+        </button>
+      </div>
+    </div>
+  </div>
+
   <script>
     const form = document.getElementById('uploadForm');
     const submitBtn = document.getElementById('submitBtn');
@@ -286,6 +518,146 @@ function getHtml() {
     const progressText = document.getElementById('progressText');
     const uploadedSize = document.getElementById('uploadedSize');
     const totalSize = document.getElementById('totalSize');
+    
+    // Settings elements
+    const toggleSettings = document.getElementById('toggleSettings');
+    const settingsContent = document.getElementById('settingsContent');
+    const settingsIcon = document.getElementById('settingsIcon');
+    const settingsToggleText = document.getElementById('settingsToggleText');
+    const chunkSizeSelect = document.getElementById('chunkSize');
+    
+    // Alert Dialog elements
+    const alertDialog = document.getElementById('alertDialog');
+    const alertTitle = document.getElementById('alertTitle');
+    const alertMessage = document.getElementById('alertMessage');
+    const alertFileName = document.getElementById('alertFileName');
+    const alertFileSize = document.getElementById('alertFileSize');
+    const alertFileChunks = document.getElementById('alertFileChunks');
+    const alertCancel = document.getElementById('alertCancel');
+    const alertContinue = document.getElementById('alertContinue');
+    
+    // File Preview elements
+    const fileInput = document.getElementById('file');
+    const filePreview = document.getElementById('filePreview');
+    const previewFileIcon = document.getElementById('previewFileIcon');
+    const previewFileName = document.getElementById('previewFileName');
+    const previewMimeType = document.getElementById('previewMimeType');
+    const previewFileSize = document.getElementById('previewFileSize');
+    const previewChunkCount = document.getElementById('previewChunkCount');
+    const previewStrategy = document.getElementById('previewStrategy');
+    const clearFileBtn = document.getElementById('clearFile');
+
+    // Settings panel functionality
+    let settingsVisible = true;
+    
+    toggleSettings.addEventListener('click', () => {
+      settingsVisible = !settingsVisible;
+      if (settingsVisible) {
+        settingsContent.classList.remove('hidden');
+        settingsIcon.style.transform = 'rotate(0deg)';
+        settingsToggleText.textContent = 'Hide';
+      } else {
+        settingsContent.classList.add('hidden');
+        settingsIcon.style.transform = 'rotate(-90deg)';
+        settingsToggleText.textContent = 'Show';
+      }
+    });
+    
+    // Load saved chunk size from localStorage
+    const savedChunkSize = localStorage.getItem('uploadChunkSize');
+    if (savedChunkSize && chunkSizeSelect) {
+      chunkSizeSelect.value = savedChunkSize;
+    }
+    
+    
+    // Update chunk info when file is selected
+    function updateChunkInfo() {
+      const fileInput = document.getElementById('file');
+      if (fileInput.files && fileInput.files[0]) {
+        const file = fileInput.files[0];
+        const chunkSize = getChunkSize();
+        const totalChunks = Math.ceil(file.size / chunkSize);
+        
+        // Update the help text to show estimated chunks for current file
+        const helpText = document.querySelector('#chunkSize + p');
+        if (helpText) {
+          helpText.innerHTML = \`
+            Larger chunks = fewer requests but slower individual uploads. 
+            <span class="font-medium">100MB is Cloudflare Workers' maximum request size.</span>
+          \`;
+        }
+      }
+    }
+    
+    // File input event listeners
+    fileInput.addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (file) {
+        showFilePreview(file);
+        updateChunkInfo();
+      } else {
+        hideFilePreview();
+      }
+    });
+    
+    // Clear file button
+    clearFileBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      clearFileSelection();
+    });
+    
+    // Settings change should update preview if file is selected
+    chunkSizeSelect.addEventListener('change', () => {
+      localStorage.setItem('uploadChunkSize', chunkSizeSelect.value);
+      console.log(\`Chunk size changed to: \${formatFileSize(parseInt(chunkSizeSelect.value))}\`);
+      updateChunkInfo();
+      
+      // Update preview if file is selected
+      if (fileInput.files && fileInput.files[0]) {
+        showFilePreview(fileInput.files[0]);
+      }
+    });
+    
+    // Drag and drop functionality
+    const dropZone = document.querySelector('label[for="file"]');
+    
+    ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+      dropZone.addEventListener(eventName, preventDefaults, false);
+    });
+    
+    function preventDefaults(e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+    
+    ['dragenter', 'dragover'].forEach(eventName => {
+      dropZone.addEventListener(eventName, highlight, false);
+    });
+    
+    ['dragleave', 'drop'].forEach(eventName => {
+      dropZone.addEventListener(eventName, unhighlight, false);
+    });
+    
+    function highlight(e) {
+      dropZone.classList.add('border-primary', 'bg-primary/5');
+    }
+    
+    function unhighlight(e) {
+      dropZone.classList.remove('border-primary', 'bg-primary/5');
+    }
+    
+    dropZone.addEventListener('drop', handleDrop, false);
+    
+    function handleDrop(e) {
+      const dt = e.dataTransfer;
+      const files = dt.files;
+      
+      if (files.length > 0) {
+        fileInput.files = files;
+        const event = new Event('change', { bubbles: true });
+        fileInput.dispatchEvent(event);
+      }
+    }
 
     // Utility function to format file sizes
     function formatFileSize(bytes) {
@@ -294,6 +666,142 @@ function getHtml() {
       const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
       const i = Math.floor(Math.log(bytes) / Math.log(k));
       return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+    }
+    
+    // Get selected chunk size
+    function getChunkSize() {
+      return parseInt(chunkSizeSelect.value) || (10 * 1024 * 1024); // Default 10MB
+    }
+    
+    // Get file icon based on MIME type
+    function getFileIcon(mimeType) {
+      if (!mimeType) return '📄';
+      
+      // Images
+      if (mimeType.startsWith('image/')) return '🖼️';
+      
+      // Videos
+      if (mimeType.startsWith('video/')) return '🎥';
+      
+      // Audio
+      if (mimeType.startsWith('audio/')) return '🎵';
+      
+      // Documents
+      if (mimeType.includes('pdf')) return '📕';
+      if (mimeType.includes('word') || mimeType.includes('document')) return '📘';
+      if (mimeType.includes('sheet') || mimeType.includes('excel')) return '📗';
+      if (mimeType.includes('presentation') || mimeType.includes('powerpoint')) return '📙';
+      if (mimeType.includes('text/')) return '📄';
+      
+      // Archives
+      if (mimeType.includes('zip') || mimeType.includes('rar') || mimeType.includes('7z') || 
+          mimeType.includes('tar') || mimeType.includes('gzip')) return '📦';
+      
+      // Code files
+      if (mimeType.includes('javascript') || mimeType.includes('json') || 
+          mimeType.includes('xml') || mimeType.includes('html')) return '📋';
+      
+      // Default
+      return '📄';
+    }
+    
+    // Show file preview
+    function showFilePreview(file) {
+      const chunkSize = getChunkSize();
+      const totalChunks = Math.ceil(file.size / chunkSize);
+      
+      // Update preview content
+      previewFileIcon.textContent = getFileIcon(file.type);
+      previewFileName.textContent = file.name || 'Unknown file';
+      previewMimeType.textContent = file.type || 'Unknown type';
+      previewFileSize.textContent = formatFileSize(file.size);
+      previewChunkCount.textContent = totalChunks + ' chunks';
+      previewStrategy.textContent = \`Chunked upload with \${formatFileSize(chunkSize)} chunks\`;
+      
+      // Show preview
+      filePreview.classList.remove('hidden');
+    }
+    
+    // Hide file preview
+    function hideFilePreview() {
+      filePreview.classList.add('hidden');
+    }
+    
+    // Clear file selection
+    function clearFileSelection() {
+      fileInput.value = '';
+      hideFilePreview();
+      // Reset any error states
+      statusMessage.classList.add('hidden');
+    }
+    
+    // Alert Dialog functionality
+    function showAlertDialog(title, message, fileName, fileSize, chunkCount, iconType = 'info') {
+      return new Promise((resolve) => {
+        // Set dialog content
+        alertTitle.textContent = title;
+        alertMessage.textContent = message;
+        alertFileName.textContent = fileName;
+        alertFileSize.textContent = formatFileSize(fileSize);
+        alertFileChunks.textContent = chunkCount + ' chunks';
+        
+        // Update icon and colors based on type
+        const iconContainer = alertDialog.querySelector('.flex.h-10.w-10');
+        const iconSvg = iconContainer.querySelector('svg');
+        
+        if (iconType === 'warning') {
+          iconContainer.className = 'flex h-10 w-10 items-center justify-center rounded-full bg-red-100';
+          iconSvg.className = 'h-5 w-5 text-red-600';
+          iconSvg.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z"></path>';
+        } else {
+          iconContainer.className = 'flex h-10 w-10 items-center justify-center rounded-full bg-amber-100';
+          iconSvg.className = 'h-5 w-5 text-amber-600';
+          iconSvg.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z"></path>';
+        }
+        
+        // Show dialog
+        alertDialog.classList.remove('hidden');
+        alertDialog.setAttribute('data-state', 'open');
+        
+        // Focus the continue button
+        alertContinue.focus();
+        
+        // Handle events
+        const handleCancel = () => {
+          hideAlertDialog();
+          resolve(false);
+        };
+        
+        const handleContinue = () => {
+          hideAlertDialog();
+          resolve(true);
+        };
+        
+        const handleEscape = (e) => {
+          if (e.key === 'Escape') {
+            handleCancel();
+          }
+        };
+        
+        // Add event listeners
+        alertCancel.addEventListener('click', handleCancel, { once: true });
+        alertContinue.addEventListener('click', handleContinue, { once: true });
+        document.addEventListener('keydown', handleEscape, { once: true });
+        
+        // Close on backdrop click
+        alertDialog.addEventListener('click', (e) => {
+          if (e.target === alertDialog) {
+            handleCancel();
+          }
+        }, { once: true });
+      });
+    }
+    
+    function hideAlertDialog() {
+      alertDialog.setAttribute('data-state', 'closed');
+      setTimeout(() => {
+        alertDialog.classList.add('hidden');
+      }, 200); // Match the animation duration
     }
 
     function showLoading(fileSize) {
@@ -540,6 +1048,104 @@ function getHtml() {
       form.reset();
     }
 
+    async function uploadFileInChunks(file) {
+      const CHUNK_SIZE = getChunkSize(); // Get user-selected chunk size
+      const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+      
+      try {
+        // Step 1: Initialize upload session
+        const initResponse = await fetch('/api/upload-init', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            filename: file.name,
+            mimeType: file.type || 'application/octet-stream',
+            size: file.size
+          })
+        });
+        
+        const sessionData = await initResponse.json();
+        if (!initResponse.ok || !sessionData.ok) {
+          throw new Error(sessionData.error || 'Failed to initialize upload session');
+        }
+        
+        console.log(\`Starting chunked upload: \${totalChunks} chunks of \${formatFileSize(CHUNK_SIZE)}\`);
+        
+        // Update progress text to show chunked upload
+        progressText.textContent = \`0% (Chunk 1/\${totalChunks})\`;
+        
+        // Step 2: Upload chunks sequentially
+        let uploadedBytes = 0;
+        let finalFileData = null;
+        
+        for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
+          const start = chunkIndex * CHUNK_SIZE;
+          const end = Math.min(start + CHUNK_SIZE, file.size);
+          const chunk = file.slice(start, end);
+          const isLastChunk = chunkIndex === totalChunks - 1;
+          
+          console.log(\`Uploading chunk \${chunkIndex + 1}/\${totalChunks}: bytes \${start}-\${end - 1}\`);
+          
+          // Upload this chunk
+          const chunkResponse = await fetch('/api/upload-chunk', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/octet-stream',
+              'X-Session-Url': sessionData.sessionUrl,
+              'X-Chunk-Start': start.toString(),
+              'X-Chunk-End': (end - 1).toString(),
+              'X-Total-Size': file.size.toString(),
+              'X-Is-Last-Chunk': isLastChunk.toString()
+            },
+            body: chunk
+          });
+          
+          if (!chunkResponse.ok) {
+            const errorData = await chunkResponse.json().catch(() => ({}));
+            throw new Error(\`Chunk \${chunkIndex + 1} upload failed: \${errorData.error || chunkResponse.statusText}\`);
+          }
+          
+          uploadedBytes += chunk.size;
+          const percentage = Math.round((uploadedBytes / file.size) * 100);
+          progressBar.style.width = percentage + '%';
+          progressText.textContent = \`\${percentage}% (Chunk \${chunkIndex + 1}/\${totalChunks})\`;
+          uploadedSize.textContent = formatFileSize(uploadedBytes);
+          
+          // If this was the last chunk, get the file details
+          if (isLastChunk) {
+            const result = await chunkResponse.json();
+            if (result.fileData) {
+              finalFileData = result.fileData;
+            }
+          }
+        }
+        
+        // Step 3: Show success with file details
+        if (finalFileData) {
+          showFileDetails(finalFileData);
+        } else {
+          // Fallback success message
+          const fallbackFile = {
+            name: file.name,
+            size: file.size,
+            mimeType: file.type || 'application/octet-stream',
+            createdTime: new Date().toISOString(),
+            modifiedTime: null,
+            id: 'Upload completed successfully',
+            webViewLink: null
+          };
+          showFileDetails(fallbackFile);
+        }
+        
+        form.reset();
+        hideLoading();
+        
+      } catch (error) {
+        console.error('Chunked upload error:', error);
+        throw error;
+      }
+    }
+
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
       
@@ -550,109 +1156,53 @@ function getHtml() {
       }
 
       const file = fileInput.files[0];
+      
+      // Set maximum file size (Google Drive per-file limit)
+      const maxSize = 5 * 1024 * 1024 * 1024 * 1024; // 5TB (Google Drive per-file limit)
+      if (file.size > maxSize) {
+        showError(\`File too large. Maximum size is \${formatFileSize(maxSize)}. Your file is \${formatFileSize(file.size)}.\`);
+        return;
+      }
+      
+      // Warn for very large files
+      if (file.size > 1024 * 1024 * 1024) { // 1GB
+        const dailyLimit = 750 * 1024 * 1024 * 1024; // 750GB daily limit
+        const chunkSize = getChunkSize();
+        const totalChunks = Math.ceil(file.size / chunkSize);
+        
+        let title, message, icon;
+        if (file.size > dailyLimit) {
+          title = "Daily Upload Limit Exceeded";
+          message = \`This file (\${formatFileSize(file.size)}) exceeds Google Drive's 750GB daily upload limit. You may need to wait up to 24 hours between uploads. Do you want to continue anyway?\`;
+          icon = 'warning'; // Red warning for limit exceeded
+        } else {
+          title = "Large File Upload";
+          message = \`This is a very large file (\${formatFileSize(file.size)}). Upload may take considerable time and will be split into \${totalChunks} chunks. Do you want to continue?\`;
+          icon = 'info'; // Amber info for large file
+        }
+        
+        const shouldContinue = await showAlertDialog(
+          title,
+          message,
+          file.name,
+          file.size,
+          totalChunks,
+          icon
+        );
+        
+        if (!shouldContinue) {
+          return;
+        }
+      }
+      
       showLoading(file.size);
       
       try {
-        // Step 1: Get upload session from Cloudflare Worker
-        const formData = new FormData(form);
-        const sessionResponse = await fetch('', { 
-          method: 'POST', 
-          body: formData 
-        });
-        
-        const sessionData = await sessionResponse.json();
-        
-        if (!sessionResponse.ok || !sessionData.ok) {
-          showError(sessionData.error || 'Failed to initialize upload. Please try again.');
-          hideLoading();
-          return;
-        }
-        
-        // Step 2: Upload directly to Google Drive via our CORS proxy
-        const xhr = new XMLHttpRequest();
-        
-        // Track upload progress to Google Drive (this is real progress!)
-        xhr.upload.addEventListener('progress', (e) => {
-          if (e.lengthComputable) {
-            updateProgress(e.loaded, e.total);
-          }
-        });
-        
-        // Handle completion
-        xhr.addEventListener('load', () => {
-          try {
-            if (xhr.status === 200) {
-              // Upload successful, try to parse the response to get file ID
-              let uploadedFileId = null;
-              try {
-                const responseData = JSON.parse(xhr.responseText);
-                uploadedFileId = responseData.id;
-              } catch (parseError) {
-                console.log('Could not parse upload response:', parseError);
-              }
-              
-              // Use the file ID from upload response, fallback to session data
-              const finalFileId = uploadedFileId || sessionData.fileId;
-              
-              if (finalFileId) {
-                getFileDetailsWithRetry(finalFileId, sessionData.filename);
-              } else {
-                // Create fallback file details when no fileId is available
-                const fallbackFile = {
-                  name: sessionData.filename,
-                  size: sessionData.size,
-                  mimeType: sessionData.mimeType,
-                  createdTime: new Date().toISOString(),
-                  modifiedTime: null,
-                  id: 'File ID not available - upload completed successfully',
-                  webViewLink: null
-                };
-                showFileDetails(fallbackFile);
-                form.reset();
-              }
-            } else {
-              showError('Upload to Google Drive failed. Please try again.');
-            }
-          } catch (error) {
-            // Even if we can't parse the response, the upload might have succeeded
-            if (sessionData.fileId) {
-              getFileDetailsWithRetry(sessionData.fileId, sessionData.filename);
-            } else {
-              showError('Invalid response from Google Drive. Please try again.');
-            }
-          } finally {
-            hideLoading();
-          }
-        });
-        
-        // Handle errors
-        xhr.addEventListener('error', () => {
-          // Upload might still succeed, check file details
-          if (sessionData.fileId) {
-            getFileDetailsWithRetry(sessionData.fileId, sessionData.filename);
-          } else {
-            showError('Network error uploading to Google Drive. Please try again.');
-          }
-          hideLoading();
-        });
-        
-        // Handle abort
-        xhr.addEventListener('abort', () => {
-          showError('Upload was cancelled.');
-          hideLoading();
-        });
-        
-        // Convert Google Drive session URL to use our CORS proxy
-        const originalUrl = new URL(sessionData.sessionUrl);
-        const proxyPath = originalUrl.pathname.replace('/upload/', '/api/proxy/upload/');
-        const proxyUrl = proxyPath + originalUrl.search;
-        
-        xhr.open('PUT', proxyUrl);
-        xhr.setRequestHeader('Content-Type', sessionData.mimeType);
-        xhr.send(file);
+        // Use chunked upload for all files
+        await uploadFileInChunks(file);
         
       } catch (error) {
-        showError('Failed to initialize upload. Please try again.');
+        showError(\`Upload failed: \${error.message}\`);
         hideLoading();
       }
     });
@@ -735,6 +1285,8 @@ async function handleGoogleDriveProxy(request: Request, env: Env): Promise<Respo
     googleUrl.searchParams.set(key, value);
   }
   
+  console.log(`Proxying ${request.method} request to: ${googleUrl.toString()}`);
+  
   // Get access token
   const accessToken = await getAccessToken(env);
   
@@ -749,20 +1301,35 @@ async function handleGoogleDriveProxy(request: Request, env: Env): Promise<Respo
   const contentLength = request.headers.get("content-length");
   if (contentLength) headers.set("content-length", contentLength);
   
+  // Copy other important headers for resumable uploads
+  const uploadContentType = request.headers.get("x-upload-content-type");
+  if (uploadContentType) headers.set("x-upload-content-type", uploadContentType);
+  
+  const uploadContentLength = request.headers.get("x-upload-content-length");
+  if (uploadContentLength) headers.set("x-upload-content-length", uploadContentLength);
+  
   try {
     const response = await fetch(googleUrl.toString(), {
       method: request.method,
       headers,
       body: request.body,
+      // Increase timeout for large uploads
+      signal: AbortSignal.timeout(300000), // 5 minutes timeout
     });
     
+    console.log(`Google Drive API response: ${response.status} ${response.statusText}`);
+    
     // Create response with CORS headers
-    const responseHeaders = {
+    const responseHeaders: Record<string, string> = {
       ...corsHeaders(),
       ...(response.headers.get("content-type") && {
         "content-type": response.headers.get("content-type")!
       })
     };
+    
+    // Copy important response headers
+    const location = response.headers.get("location");
+    if (location) responseHeaders["location"] = location;
     
     return new Response(response.body, {
       status: response.status,
@@ -770,6 +1337,7 @@ async function handleGoogleDriveProxy(request: Request, env: Env): Promise<Respo
       headers: responseHeaders,
     });
   } catch (error: any) {
+    console.error('CORS proxy error:', error);
     return json({ error: error?.message || String(error) }, 500);
   }
 }
@@ -935,6 +1503,103 @@ async function getFileDetails(accessToken: string, fileId: string): Promise<any>
   }
 
   return await response.json();
+}
+
+async function handleUploadInit(request: Request, env: Env): Promise<Response> {
+  try {
+    const body = await request.json() as { filename: string; mimeType: string; size: number };
+    const { filename, mimeType, size } = body;
+    
+    if (!filename || !size) {
+      return json({ error: "Missing filename or size" }, 400);
+    }
+    
+    console.log(`Initializing chunked upload: ${filename}, size: ${size} bytes`);
+    
+    // Get access token
+    const accessToken = await getAccessToken(env);
+    
+    // Create resumable upload session
+    const sessionUrl = await createResumableSession({
+      accessToken,
+      filename,
+      mimeType: mimeType || "application/octet-stream",
+      size,
+      folderId: env.DRIVE_FOLDER_ID,
+      supportsAllDrives: true,
+    });
+    
+    console.log('Chunked upload session created:', sessionUrl);
+    
+    return json({
+      ok: true,
+      sessionUrl,
+      filename,
+      mimeType,
+      size
+    });
+  } catch (err: any) {
+    console.error('Upload init error:', err);
+    return json({ error: err?.message || String(err) }, 500);
+  }
+}
+
+async function handleChunkUpload(request: Request, env: Env): Promise<Response> {
+  try {
+    const sessionUrl = request.headers.get('X-Session-Url');
+    const chunkStart = parseInt(request.headers.get('X-Chunk-Start') || '0');
+    const chunkEnd = parseInt(request.headers.get('X-Chunk-End') || '0');
+    const totalSize = parseInt(request.headers.get('X-Total-Size') || '0');
+    const isLastChunk = request.headers.get('X-Is-Last-Chunk') === 'true';
+    
+    if (!sessionUrl) {
+      return json({ error: "Missing session URL" }, 400);
+    }
+    
+    console.log(`Uploading chunk: bytes ${chunkStart}-${chunkEnd}/${totalSize}, last: ${isLastChunk}`);
+    
+    const chunkData = await request.arrayBuffer();
+    const chunkSize = chunkData.byteLength;
+    
+    // Validate chunk size doesn't exceed Cloudflare Workers limit
+    const MAX_CHUNK_SIZE = 100 * 1024 * 1024; // 100MB
+    if (chunkSize > MAX_CHUNK_SIZE) {
+      return json({ error: `Chunk size ${chunkSize} bytes exceeds maximum allowed size of ${MAX_CHUNK_SIZE} bytes` }, 413);
+    }
+    
+    // Upload chunk to Google Drive
+    const response = await fetch(sessionUrl, {
+      method: 'PUT',
+      headers: {
+        'Content-Length': chunkSize.toString(),
+        'Content-Range': `bytes ${chunkStart}-${chunkEnd}/${totalSize}`
+      },
+      body: chunkData,
+    });
+    
+    console.log(`Chunk upload response: ${response.status} ${response.statusText}`);
+    
+    if (response.status === 308) {
+      // More chunks expected
+      return json({ ok: true, status: 'continue' });
+    } else if (response.status === 200 || response.status === 201) {
+      // Upload complete
+      try {
+        const fileData = await response.json() as any;
+        console.log('Upload completed, file ID:', fileData.id);
+        return json({ ok: true, status: 'complete', fileData });
+      } catch (parseError) {
+        console.log('Could not parse final response, but upload succeeded');
+        return json({ ok: true, status: 'complete' });
+      }
+    } else {
+      const errorText = await response.text().catch(() => '');
+      throw new Error(`Upload failed with status ${response.status}: ${errorText}`);
+    }
+  } catch (err: any) {
+    console.error('Chunk upload error:', err);
+    return json({ error: err?.message || String(err) }, 500);
+  }
 }
 
 async function safeText(resp: Response) {
