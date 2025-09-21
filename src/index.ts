@@ -138,6 +138,11 @@ function getHtml() {
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <title>Upload to Google Drive</title>
+<link rel="icon" href="/icons/favicon.ico" sizes="any">
+<link rel="icon" href="/icons/icon-192.png" type="image/png" sizes="192x192">
+<link rel="icon" href="/icons/icon-512.png" type="image/png" sizes="512x512">
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+<link rel="manifest" href="/manifest.json">
 <script src="https://cdn.tailwindcss.com"></script>
 <script>
   tailwind.config = {
@@ -267,10 +272,8 @@ function getHtml() {
     <div class="bg-white rounded-lg shadow-lg border border-border p-6 space-y-6">
       <!-- Header -->
       <div class="text-center space-y-2">
-        <div class="w-12 h-12 bg-primary rounded-lg flex items-center justify-center mx-auto">
-          <svg class="w-6 h-6 text-primary-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path>
-          </svg>
+        <div class="w-25 h-25 flex items-center justify-center mx-auto">
+          <img src="/icons/icon-512.png" alt="Upload to Google Drive" class="w-24 h-24">
         </div>
         <h1 class="text-2xl font-semibold text-foreground">Upload to Google Drive</h1>
         <p class="text-muted-foreground text-sm">Select a file and upload directly to your Drive folder</p>
