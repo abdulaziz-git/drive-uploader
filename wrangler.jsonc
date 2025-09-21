@@ -4,16 +4,16 @@
  */
 {
 	"$schema": "node_modules/wrangler/config-schema.json",
-	"name": "twilight-hat-5f2a",
+	"name": "drive-uploader",
 	"main": "src/index.ts",
 	"compatibility_date": "2025-09-21",
 	"compatibility_flags": [
 		"global_fetch_strictly_public"
 	],
-	"assets": {
-		// The path to the directory containing the `index.html` file to be served at `/`
-		"directory": "./public"
-	},
+	// "assets": {
+	// 	// The path to the directory containing the `index.html` file to be served at `/`
+	// 	"directory": "./public"
+	// },
 	"observability": {
 		"enabled": true
 	}
