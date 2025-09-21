@@ -1,14 +1,18 @@
 # Google Drive Uploader - Cloudflare Workers
 
-A professional file uploader that allows users to upload files directly to Google Drive through a Cloudflare Worker, featuring real-time progress tracking and a beautiful UI.
+A professional Progressive Web App (PWA) that allows users to upload files directly to Google Drive through a Cloudflare Worker, featuring real-time progress tracking, universal file support, and a beautiful modern UI.
 
 ## ✨ Features
 
-- **Chunked Upload Support** - Upload files up to 5GB using intelligent chunk-based uploading
+- **Universal File Support** - Upload ANY file type with proper MIME type handling
+- **Progressive Web App** - Installable PWA with professional icons and manifest
+- **Chunked Upload Support** - Upload files up to 5TB using intelligent chunk-based uploading
 - **No File Size Limits** - Overcome Cloudflare Workers' 100MB limit with automatic chunking
 - **Real-time Progress** - See actual upload progress with chunk-by-chunk tracking
 - **Direct Google Drive Upload** - Files upload directly to Google Drive using resumable upload API
-- **Embedded UI** - Clean, modern interface embedded directly in the Worker with file type icons
+- **Professional UI** - Clean, modern interface with your custom app icon
+- **File Associations** - Set as default handler for any file type
+- **Share Target** - Accept files shared from other apps
 - **Service Account Integration** - Secure server-side authentication using Google Service Account
 - **Professional File Details** - Complete file information with Google Drive file ID and direct links
 - **Copy File ID** - One-click copying of Google Drive file IDs for API usage
@@ -120,6 +124,15 @@ Browser → Worker → Google Drive Resumable API
 cf-workers-uploader-gd/
 ├── src/
 │   └── index.ts              # Main Worker script with embedded HTML
+├── public/
+│   ├── manifest.json         # PWA manifest with universal file support
+│   └── icons/                # Professional app icons
+│       ├── favicon.ico       # Browser tab icon
+│       ├── icon-192.png      # Standard PWA icon
+│       ├── icon-512.png      # High-res PWA icon
+│       ├── icon-192-maskable.png # Android adaptive icon
+│       ├── icon-512-maskable.png # High-res Android adaptive icon
+│       └── apple-touch-icon.png  # iOS home screen icon
 ├── test/
 │   ├── index.spec.ts        # Tests
 │   ├── env.d.ts            # Test environment types
@@ -134,8 +147,7 @@ cf-workers-uploader-gd/
 ├── tsconfig.json           # TypeScript configuration
 ├── vitest.config.mts       # Test configuration
 ├── worker-configuration.d.ts # Worker type definitions
-├── wrangler.jsonc          # Extended Wrangler configuration
-└── wrangler.toml           # Wrangler configuration
+└── wrangler.jsonc          # Wrangler configuration with assets binding
 ```
 
 ## 🔧 Configuration
@@ -149,24 +161,43 @@ cf-workers-uploader-gd/
 | `GOOGLE_PRIVATE_KEY_ID` | Private key ID | ❌ |
 | `DRIVE_FOLDER_ID` | Target Google Drive folder ID | ❌ |
 
-### Worker Configuration (`wrangler.toml`)
+### Worker Configuration (`wrangler.jsonc`)
 
-```toml
-name = "drive-uploader"
-main = "src/index.ts"
-compatibility_date = "2025-09-21"
-
-[vars]
-# Optional default folder (uploads will go here)
-DRIVE_FOLDER_ID = "your-google-drive-folder-id"
-
-# No secrets here—set them with `wrangler secret put`
+```jsonc
+{
+  "name": "drive-uploader",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-09-21",
+  "compatibility_flags": [
+    "global_fetch_strictly_public"
+  ],
+  "assets": {
+    "directory": "./public"
+  },
+  "observability": {
+    "enabled": true
+  }
+  // Note: Use secrets to store sensitive data with `wrangler secret put`
+  // No environment variables here—set them with `wrangler secret put`
+}
 ```
+
+### Static Assets Configuration
+The `wrangler.jsonc` includes an assets binding that serves your `public/` directory, which contains:
+- `manifest.json` - PWA manifest file
+- `icons/` - All your professional app icons
+- Any other static assets
 
 ## 🎨 UI Components
 
+### Professional Header
+- **Custom App Icon** - Your professional 512x512 PNG icon prominently displayed
+- **Modern Typography** - Clean, readable app title and description
+- **Responsive Design** - Optimized for all screen sizes and devices
+
 ### Upload Form
 - **Modern File Input** - shadcn/ui styled drag-and-drop zone
+- **Universal File Support** - Accept ANY file type with proper MIME handling
 - **Drag & Drop Support** - Visual feedback with hover states
 - **Instant File Preview** - Real-time file details display
 - **Size Limits** - Up to 5TB files supported (Google Drive per-file limit)
@@ -217,6 +248,57 @@ DRIVE_FOLDER_ID = "your-google-drive-folder-id"
 - **Smart Recovery** - Clear error messages with chunk numbers
 - **Upload Termination** - Graceful handling of failures
 - **Detailed Logging** - Worker logs for troubleshooting
+
+## 📱 Progressive Web App (PWA) Features
+
+### Professional App Icons
+- **Browser Tab Icon** - Custom favicon.ico for browser tabs and bookmarks
+- **PWA Icons** - 192x192 and 512x512 PNG icons for app installation
+- **Android Adaptive Icons** - Maskable icons that adapt to Android's theming
+- **iOS Home Screen** - Apple touch icon for iOS home screen installation
+- **High Quality** - All icons are crisp and professional at any size
+
+### Universal File Support
+- **File Handlers** - Set as default app for opening ANY file type
+- **Share Target** - Accept files shared from other apps
+- **MIME Type Support** - Proper handling of all file types with `application/octet-stream`
+- **Cross-Platform** - Works on desktop, mobile, and tablet devices
+
+### PWA Installation
+- **Installable** - Users can install your app on their device
+- **Standalone Mode** - Runs like a native app without browser UI
+- **App Shortcuts** - Quick access to upload functionality
+- **Offline Ready** - Basic functionality works offline (with service worker)
+
+### Manifest Configuration
+```json
+{
+  "name": "Upload to Google Drive",
+  "short_name": "Drive Uploader",
+  "display": "standalone",
+  "file_handlers": [
+    {
+      "action": "/",
+      "accept": {
+        "application/octet-stream": [".*"]
+      }
+    }
+  ],
+  "share_target": {
+    "action": "/",
+    "method": "POST",
+    "enctype": "multipart/form-data",
+    "params": {
+      "files": [
+        {
+          "name": "file",
+          "accept": ["*/*"]
+        }
+      ]
+    }
+  }
+}
+```
 
 ## 🔒 Security Features
 
